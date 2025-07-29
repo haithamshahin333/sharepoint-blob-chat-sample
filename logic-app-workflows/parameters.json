@@ -1,0 +1,47 @@
+{
+    "blob_container_name": {
+        "type": "String",
+        "value": "NAME OF BLOB CONTAINER - e.g. 'ingest-blob-container'" 
+    },
+    "chunk_index": {
+        "type": "String",
+        "value": "NAME OF THE SEARCH INDEX STORING THE CHUNKED DOCUMENTS - e.g. 'chunk-index'"
+    },
+    "cosmos_container_name": {
+        "type": "String",
+        "value": "NAME OF THE COSMOS CONTAINER - e.g. 'document-container'"
+    },
+    "cosmos_database_name": {
+        "type": "String",
+        "value": "NAME OF THE COSMOS DATABASE - e.g. 'document-db'"
+    },
+    "search_endpoint": {
+        "type": "String",
+        "value": "NAME OF THE SEARCH ENDPOINT - e.g. 'https://SEARCHNAME.search.windows.net'"
+    },
+    "semantic-config": {
+        "type": "String",
+        "value": "NAME OF THE SEMANTIC CONFIGURATION - e.g. 'semantic-config'"
+    },
+    "sharepoint_category_folders": {
+        "type": "Array",
+        "value": [
+            {
+                "category": "NAME OF CATEGORY FOR THE GIVEN FOLDER IN THE DOCUMENT LIBRARY - e.g. 'category1'",
+                "folder": "NAME OF THE FOLDER IN THE DOCUMENT LIBRARY - e.g. 'folder1'"
+            }
+        ]
+    },
+    "sharepoint_document_library": {
+        "type": "String",
+        "value": "Documents"
+    },
+    "sharepoint_site_address": {
+        "type": "String",
+        "value": "NAME OF THE SHAREPOINT SITE - e.g. https://SHAREPOINTNAME.sharepoint.com/sites/SITENAME"
+    },
+    "storage_account_name": {
+        "type": "String",
+        "value": "NAME OF THE STORAGE ACCOUNT - e.g. 'storageaccountname'"
+    }
+}
