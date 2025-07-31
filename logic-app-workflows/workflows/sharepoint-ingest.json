@@ -1,0 +1,267 @@
+{
+    "definition": {
+        "$schema": "https://schema.management.azure.com/providers/Microsoft.Logic/schemas/2016-06-01/workflowdefinition.json#",
+        "actions": {
+            "Until": {
+                "type": "Until",
+                "expression": "@equals(sub(length(variables('UncrawledFolders')), 1),variables('LoopIndex'))",
+                "limit": {
+                    "count": 5000,
+                    "timeout": "PT24H"
+                },
+                "actions": {
+                    "Increment_LoopIndex": {
+                        "type": "SetVariable",
+                        "inputs": {
+                            "name": "LoopIndex",
+                            "value": "@int(iterationIndexes('Until'))"
+                        }
+                    },
+                    "Get_files_(properties_only)": {
+                        "type": "ApiConnection",
+                        "inputs": {
+                            "host": {
+                                "connection": {
+                                    "referenceName": "sharepointonline"
+                                }
+                            },
+                            "method": "get",
+                            "path": "/datasets/@{encodeURIComponent(encodeURIComponent(parameters('sharepoint_site_address')))}/tables/@{encodeURIComponent(encodeURIComponent(parameters('sharepoint_document_library')))}/getfileitems",
+                            "queries": {
+                                "$top": 5000,
+                                "folderPath": "@variables('UncrawledFolders')[variables('LoopIndex')]",
+                                "viewScopeOption": "Default"
+                            }
+                        },
+                        "runAfter": {
+                            "Increment_LoopIndex": [
+                                "SUCCEEDED"
+                            ]
+                        }
+                    },
+                    "For_each": {
+                        "type": "Foreach",
+                        "foreach": "@body('Get_files_(properties_only)')?['value']",
+                        "actions": {
+                            "If_Folder": {
+                                "type": "If",
+                                "expression": {
+                                    "and": [
+                                        {
+                                            "equals": [
+                                                "@item()?['{IsFolder}']",
+                                                true
+                                            ]
+                                        }
+                                    ]
+                                },
+                                "actions": {
+                                    "Append_folder_to_UncrawledFolders": {
+                                        "type": "AppendToArrayVariable",
+                                        "inputs": {
+                                            "name": "UncrawledFolders",
+                                            "value": "@item()?['{FullPath}']"
+                                        }
+                                    }
+                                },
+                                "else": {
+                                    "actions": {
+                                        "If_Blob_Exists": {
+                                            "type": "If",
+                                            "expression": {
+                                                "and": [
+                                                    {
+                                                        "equals": [
+                                                            "@body('Check_whether_blob_exists')?['isBlobExists']",
+                                                            true
+                                                        ]
+                                                    }
+                                                ]
+                                            },
+                                            "actions": {
+                                                "If_Blob_is_Stale": {
+                                                    "type": "If",
+                                                    "expression": {
+                                                        "and": [
+                                                            {
+                                                                "equals": [
+                                                                    "@greater(ticks(item()?['Modified']),ticks(body('Check_whether_blob_exists')?['properties']?['lastModified']))",
+                                                                    true
+                                                                ]
+                                                            }
+                                                        ]
+                                                    },
+                                                    "actions": {
+                                                        "Remove_the_Blob_from_Index_and_Storage": {
+                                                            "type": "Workflow",
+                                                            "inputs": {
+                                                                "host": {
+                                                                    "workflow": {
+                                                                        "id": "remove-index-and-sync-child"
+                                                                    }
+                                                                },
+                                                                "body": {
+                                                                    "blobFilePath": "@item()?['{FullPath}']",
+                                                                    "category": "@triggerBody()?['category']"
+                                                                }
+                                                            }
+                                                        },
+                                                        "Re-Index_and_Copy_to_Blob_": {
+                                                            "type": "Workflow",
+                                                            "inputs": {
+                                                                "host": {
+                                                                    "workflow": {
+                                                                        "id": "index-and-sync-child"
+                                                                    }
+                                                                },
+                                                                "body": {
+                                                                    "identifier": "@item()?['{Identifier}']",
+                                                                    "fullpath": "@item()?['{FullPath}']",
+                                                                    "category": "@triggerBody()?['category']"
+                                                                }
+                                                            },
+                                                            "runAfter": {
+                                                                "Remove_the_Blob_from_Index_and_Storage": [
+                                                                    "SUCCEEDED"
+                                                                ]
+                                                            }
+                                                        }
+                                                    },
+                                                    "else": {
+                                                        "actions": {}
+                                                    }
+                                                }
+                                            },
+                                            "else": {
+                                                "actions": {
+                                                    "Index_and_Sync": {
+                                                        "type": "Workflow",
+                                                        "inputs": {
+                                                            "host": {
+                                                                "workflow": {
+                                                                    "id": "index-and-sync-child"
+                                                                }
+                                                            },
+                                                            "body": {
+                                                                "identifier": "@item()?['{Identifier}']",
+                                                                "fullpath": "@item()?['{FullPath}']",
+                                                                "category": "@triggerBody()?['category']"
+                                                            }
+                                                        }
+                                                    }
+                                                }
+                                            },
+                                            "runAfter": {
+                                                "Check_whether_blob_exists": [
+                                                    "SUCCEEDED"
+                                                ]
+                                            }
+                                        },
+                                        "Check_whether_blob_exists": {
+                                            "type": "ServiceProvider",
+                                            "inputs": {
+                                                "parameters": {
+                                                    "containerName": "@parameters('blob_container_name')",
+                                                    "blobName": "@item()?['{FullPath}']"
+                                                },
+                                                "serviceProviderConfiguration": {
+                                                    "connectionName": "AzureBlob",
+                                                    "operationId": "blobExists",
+                                                    "serviceProviderId": "/serviceProviders/AzureBlob"
+                                                }
+                                            }
+                                        }
+                                    }
+                                }
+                            }
+                        },
+                        "runAfter": {
+                            "Get_files_(properties_only)": [
+                                "SUCCEEDED"
+                            ]
+                        },
+                        "runtimeConfiguration": {
+                            "concurrency": {
+                                "repetitions": 1
+                            }
+                        }
+                    }
+                },
+                "runAfter": {
+                    "Append_to_UncrawledFolders": [
+                        "SUCCEEDED"
+                    ]
+                }
+            },
+            "Response": {
+                "type": "Response",
+                "kind": "Http",
+                "inputs": {
+                    "statusCode": 200
+                },
+                "runAfter": {
+                    "Until": [
+                        "SUCCEEDED"
+                    ]
+                }
+            },
+            "Initialize_variables": {
+                "type": "InitializeVariable",
+                "inputs": {
+                    "variables": [
+                        {
+                            "name": "UncrawledFolders",
+                            "type": "array",
+                            "value": []
+                        },
+                        {
+                            "name": "LoopIndex",
+                            "type": "integer",
+                            "value": 0
+                        },
+                        {
+                            "name": "ErrorFiles",
+                            "type": "array",
+                            "value": []
+                        }
+                    ]
+                },
+                "runAfter": {}
+            },
+            "Append_to_UncrawledFolders": {
+                "type": "AppendToArrayVariable",
+                "inputs": {
+                    "name": "UncrawledFolders",
+                    "value": "@triggerBody()?['folder']"
+                },
+                "runAfter": {
+                    "Initialize_variables": [
+                        "SUCCEEDED"
+                    ]
+                }
+            }
+        },
+        "contentVersion": "1.0.0.0",
+        "outputs": {},
+        "triggers": {
+            "When_a_HTTP_request_is_received": {
+                "type": "Request",
+                "kind": "Http",
+                "inputs": {
+                    "schema": {
+                        "type": "object",
+                        "properties": {
+                            "folder": {
+                                "type": "string"
+                            },
+                            "category": {
+                                "type": "string"
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    },
+    "kind": "Stateful"
+}
