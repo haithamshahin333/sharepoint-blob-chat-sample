@@ -1,0 +1,335 @@
+{
+    "definition": {
+        "$schema": "https://schema.management.azure.com/providers/Microsoft.Logic/schemas/2016-06-01/workflowdefinition.json#",
+        "actions": {
+            "Initialize_UncrawledFolders": {
+                "type": "InitializeVariable",
+                "inputs": {
+                    "variables": [
+                        {
+                            "name": "UncrawledFolders",
+                            "type": "array",
+                            "value": [
+                                "@outputs('Compose_Top_Level_Folder')"
+                            ]
+                        }
+                    ]
+                },
+                "runAfter": {
+                    "Initialize_Response_Variable": [
+                        "SUCCEEDED"
+                    ]
+                }
+            },
+            "Initialize_LoopIndex": {
+                "type": "InitializeVariable",
+                "inputs": {
+                    "variables": [
+                        {
+                            "name": "LoopIndex",
+                            "type": "integer",
+                            "value": 0
+                        }
+                    ]
+                },
+                "runAfter": {
+                    "Initialize_UncrawledFolders": [
+                        "SUCCEEDED"
+                    ]
+                }
+            },
+            "Initialize_CurrentFolder": {
+                "type": "InitializeVariable",
+                "inputs": {
+                    "variables": [
+                        {
+                            "name": "CurrentFolder",
+                            "type": "string",
+                            "value": "@variables('UncrawledFolders')[variables('LoopIndex')]"
+                        }
+                    ]
+                },
+                "runAfter": {
+                    "Initialize_LoopIndex": [
+                        "SUCCEEDED"
+                    ]
+                }
+            },
+            "Initialize_PageMarker": {
+                "type": "InitializeVariable",
+                "inputs": {
+                    "variables": [
+                        {
+                            "name": "PageMarker",
+                            "type": "string"
+                        }
+                    ]
+                },
+                "runAfter": {
+                    "Initialize_CurrentFolder": [
+                        "SUCCEEDED"
+                    ]
+                }
+            },
+            "Until": {
+                "type": "Until",
+                "expression": "@equals(variables('LoopIndex'),sub(length(variables('UncrawledFolders')),1))",
+                "limit": {
+                    "count": 5000,
+                    "timeout": "PT24H"
+                },
+                "actions": {
+                    "Set_LoopIndex": {
+                        "type": "SetVariable",
+                        "inputs": {
+                            "name": "LoopIndex",
+                            "value": "@int(iterationIndexes('Until'))"
+                        }
+                    },
+                    "Set_CurrentFolder": {
+                        "type": "SetVariable",
+                        "inputs": {
+                            "name": "CurrentFolder",
+                            "value": "@variables('UncrawledFolders')[variables('LoopIndex')]"
+                        },
+                        "runAfter": {
+                            "Set_LoopIndex": [
+                                "SUCCEEDED"
+                            ]
+                        }
+                    },
+                    "List_all_the_blob_directories_in_CurrentFolder": {
+                        "type": "ServiceProvider",
+                        "inputs": {
+                            "parameters": {
+                                "containerName": "@parameters('blob_container_name')",
+                                "blobNamePrefix": "@{variables('CurrentFolder')}/"
+                            },
+                            "serviceProviderConfiguration": {
+                                "connectionName": "AzureBlob",
+                                "operationId": "listBlobDirectories",
+                                "serviceProviderId": "/serviceProviders/AzureBlob"
+                            }
+                        },
+                        "runAfter": {
+                            "Set_CurrentFolder": [
+                                "SUCCEEDED"
+                            ]
+                        }
+                    },
+                    "For_each_folder": {
+                        "type": "foreach",
+                        "foreach": "@outputs('List_all_the_blob_directories_in_CurrentFolder')?['body']?['blobDirectories']",
+                        "actions": {
+                            "Append_to_UncrawledFolders": {
+                                "type": "AppendToArrayVariable",
+                                "inputs": {
+                                    "name": "UncrawledFolders",
+                                    "value": "@items('For_each_folder')['path']"
+                                }
+                            }
+                        },
+                        "runAfter": {
+                            "List_all_the_blob_directories_in_CurrentFolder": [
+                                "SUCCEEDED"
+                            ]
+                        },
+                        "runtimeConfiguration": {
+                            "concurrency": {
+                                "repetitions": 1
+                            }
+                        }
+                    },
+                    "Until_Empty_PageMarker": {
+                        "type": "Until",
+                        "expression": "@equals(empty(variables('PageMarker')),true)",
+                        "limit": {
+                            "count": 1000,
+                            "timeout": "PT10H"
+                        },
+                        "actions": {
+                            "List_all_the_blobs_in_CurrentFolder": {
+                                "type": "ServiceProvider",
+                                "inputs": {
+                                    "parameters": {
+                                        "containerName": "@parameters('blob_container_name')",
+                                        "blobNamePrefix": "@{variables('CurrentFolder')}/",
+                                        "pageMarker": "@variables('PageMarker')",
+                                        "excludeSubFolderBlobs": true
+                                    },
+                                    "serviceProviderConfiguration": {
+                                        "connectionName": "AzureBlob",
+                                        "operationId": "listBlobs",
+                                        "serviceProviderId": "/serviceProviders/AzureBlob"
+                                    }
+                                }
+                            },
+                            "Set_PageMarker": {
+                                "type": "SetVariable",
+                                "inputs": {
+                                    "name": "PageMarker",
+                                    "value": "@body('List_all_the_blobs_in_CurrentFolder')?['pageMarker']"
+                                },
+                                "runAfter": {
+                                    "List_all_the_blobs_in_CurrentFolder": [
+                                        "SUCCEEDED"
+                                    ]
+                                }
+                            },
+                            "For_each_blob_in_folder": {
+                                "type": "Foreach",
+                                "foreach": "@body('List_all_the_blobs_in_CurrentFolder')?['blobs']",
+                                "actions": {
+                                    "Get_file_metadata_using_path": {
+                                        "type": "ApiConnection",
+                                        "inputs": {
+                                            "host": {
+                                                "connection": {
+                                                    "referenceName": "sharepointonline"
+                                                }
+                                            },
+                                            "method": "get",
+                                            "path": "/datasets/@{encodeURIComponent(encodeURIComponent(parameters('sharepoint_site_address')))}/GetFileByPath",
+                                            "queries": {
+                                                "path": "@item()?['name']",
+                                                "queryParametersSingleEncoded": true
+                                            }
+                                        }
+                                    },
+                                    "If_File_Not_Found_in_Sharepoint": {
+                                        "type": "If",
+                                        "expression": {
+                                            "and": [
+                                                {
+                                                    "equals": [
+                                                        "@body('Get_file_metadata_using_path')?['status']",
+                                                        404
+                                                    ]
+                                                }
+                                            ]
+                                        },
+                                        "actions": {
+                                            "Remove_from_Datastores": {
+                                                "type": "Workflow",
+                                                "inputs": {
+                                                    "host": {
+                                                        "workflow": {
+                                                            "id": "remove-index-and-sync-child"
+                                                        }
+                                                    },
+                                                    "body": {
+                                                        "blobFilePath": "@item()?['name']",
+                                                        "category": "@triggerBody()?['category']"
+                                                    }
+                                                }
+                                            },
+                                            "Append_to_array_variable": {
+                                                "type": "AppendToArrayVariable",
+                                                "inputs": {
+                                                    "name": "RemovedFiles",
+                                                    "value": "@item()?['name']"
+                                                },
+                                                "runAfter": {
+                                                    "Remove_from_Datastores": [
+                                                        "SUCCEEDED"
+                                                    ]
+                                                }
+                                            }
+                                        },
+                                        "else": {
+                                            "actions": {}
+                                        },
+                                        "runAfter": {
+                                            "Get_file_metadata_using_path": [
+                                                "SUCCEEDED",
+                                                "FAILED"
+                                            ]
+                                        }
+                                    }
+                                },
+                                "runAfter": {
+                                    "Set_PageMarker": [
+                                        "SUCCEEDED"
+                                    ]
+                                },
+                                "runtimeConfiguration": {
+                                    "concurrency": {
+                                        "repetitions": 1
+                                    }
+                                }
+                            }
+                        },
+                        "runAfter": {
+                            "For_each_folder": [
+                                "SUCCEEDED"
+                            ]
+                        }
+                    }
+                },
+                "runAfter": {
+                    "Initialize_PageMarker": [
+                        "SUCCEEDED"
+                    ]
+                }
+            },
+            "Compose_Top_Level_Folder": {
+                "type": "Compose",
+                "inputs": "@triggerBody()?['documentFolder']",
+                "runAfter": {}
+            },
+            "Response": {
+                "type": "Response",
+                "kind": "Http",
+                "inputs": {
+                    "statusCode": 200,
+                    "body": "@variables('RemovedFiles')"
+                },
+                "runAfter": {
+                    "Until": [
+                        "SUCCEEDED"
+                    ]
+                }
+            },
+            "Initialize_Response_Variable": {
+                "type": "InitializeVariable",
+                "inputs": {
+                    "variables": [
+                        {
+                            "name": "RemovedFiles",
+                            "type": "array",
+                            "value": []
+                        }
+                    ]
+                },
+                "runAfter": {
+                    "Compose_Top_Level_Folder": [
+                        "SUCCEEDED"
+                    ]
+                }
+            }
+        },
+        "contentVersion": "1.0.0.0",
+        "outputs": {},
+        "triggers": {
+            "When_a_HTTP_request_is_received": {
+                "type": "Request",
+                "kind": "Http",
+                "inputs": {
+                    "method": "POST",
+                    "schema": {
+                        "type": "object",
+                        "properties": {
+                            "documentFolder": {
+                                "type": "string"
+                            },
+                            "category": {
+                                "type": "string"
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    },
+    "kind": "Stateful"
+}

@@ -6,7 +6,7 @@
                 "type": "Foreach",
                 "foreach": "@parameters('sharepoint_category_folders')",
                 "actions": {
-                    "INGEST_NEW_or_UPDATED_SHAREPOINT_FILES": {
+                    "Ingest_New_or_Update_Stale_Files": {
                         "type": "Workflow",
                         "inputs": {
                             "host": {
@@ -17,10 +17,13 @@
                             "body": {
                                 "folder": "@body('Parse_JSON')?['folder']",
                                 "category": "@body('Parse_JSON')?['category']"
+                            },
+                            "retryPolicy": {
+                                "type": "none"
                             }
                         },
                         "runAfter": {
-                            "Parse_JSON": [
+                            "Remove_Stale_Files_from_Blob": [
                                 "SUCCEEDED"
                             ]
                         }
@@ -40,6 +43,28 @@
                                     }
                                 }
                             }
+                        }
+                    },
+                    "Remove_Stale_Files_from_Blob": {
+                        "type": "Workflow",
+                        "inputs": {
+                            "host": {
+                                "workflow": {
+                                    "id": "sharepoint-removal"
+                                }
+                            },
+                            "body": {
+                                "documentFolder": "@concat('Shared Documents/',body('Parse_JSON')?['folder'])",
+                                "category": "@body('Parse_JSON')?['category']"
+                            },
+                            "retryPolicy": {
+                                "type": "none"
+                            }
+                        },
+                        "runAfter": {
+                            "Parse_JSON": [
+                                "SUCCEEDED"
+                            ]
                         }
                     }
                 },

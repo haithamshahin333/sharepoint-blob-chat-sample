@@ -1,0 +1,255 @@
+{
+    "definition": {
+        "$schema": "https://schema.management.azure.com/providers/Microsoft.Logic/schemas/2016-06-01/workflowdefinition.json#",
+        "actions": {
+            "Response_-_Deleted": {
+                "type": "Response",
+                "kind": "Http",
+                "inputs": {
+                    "statusCode": 200
+                },
+                "runAfter": {
+                    "Delete_a_blob": [
+                        "SUCCEEDED"
+                    ]
+                },
+                "operationOptions": "Asynchronous"
+            },
+            "Read_Doc_from_Cosmos": {
+                "type": "ServiceProvider",
+                "inputs": {
+                    "parameters": {
+                        "databaseId": "@parameters('cosmos_database_name')",
+                        "containerId": "@parameters('cosmos_container_name')",
+                        "itemId": "@body('Parse_Document_ID_Output')?['base_document_id']",
+                        "partitionKey": "@body('Parse_Document_ID_Output')?['base_document_id']"
+                    },
+                    "serviceProviderConfiguration": {
+                        "connectionName": "AzureCosmosDB",
+                        "operationId": "ReadDocument",
+                        "serviceProviderId": "/serviceProviders/AzureCosmosDB"
+                    }
+                },
+                "runAfter": {
+                    "Parse_Document_ID_Output": [
+                        "SUCCEEDED"
+                    ]
+                }
+            },
+            "Compose_BlobUrl": {
+                "type": "Compose",
+                "inputs": "https://@{parameters('storage_account_name')}.blob.core.windows.net/@{parameters('blob_container_name')}/@{triggerBody()?['blobFilePath']}",
+                "runAfter": {}
+            },
+            "Get_Chunk_ID_List": {
+                "type": "Compose",
+                "inputs": "@body('Read_Doc_from_Cosmos')?['content']?['chunk_ids']",
+                "runAfter": {
+                    "Read_Doc_from_Cosmos": [
+                        "SUCCEEDED"
+                    ]
+                }
+            },
+            "Delete_an_item": {
+                "type": "ServiceProvider",
+                "inputs": {
+                    "parameters": {
+                        "databaseId": "@parameters('cosmos_database_name')",
+                        "containerId": "@parameters('cosmos_container_name')",
+                        "itemId": "@body('Parse_Document_ID_Output')?['base_document_id']",
+                        "partitionKey": "@body('Parse_Document_ID_Output')?['base_document_id']"
+                    },
+                    "serviceProviderConfiguration": {
+                        "connectionName": "AzureCosmosDB",
+                        "operationId": "DeleteDocument",
+                        "serviceProviderId": "/serviceProviders/AzureCosmosDB"
+                    }
+                },
+                "runAfter": {
+                    "Until": [
+                        "SUCCEEDED"
+                    ]
+                }
+            },
+            "Initialize_Batch_Vars_for_Deletion": {
+                "type": "InitializeVariable",
+                "inputs": {
+                    "variables": [
+                        {
+                            "name": "BatchIndex",
+                            "type": "integer",
+                            "value": 0
+                        },
+                        {
+                            "name": "BatchSize",
+                            "type": "integer",
+                            "value": 100
+                        },
+                        {
+                            "name": "TotalChunkIds",
+                            "type": "integer",
+                            "value": "@length(outputs('Get_Chunk_ID_List'))"
+                        }
+                    ]
+                },
+                "runAfter": {
+                    "Get_Chunk_ID_List": [
+                        "SUCCEEDED"
+                    ]
+                }
+            },
+            "Until": {
+                "type": "Until",
+                "expression": "@greaterOrEquals(variables('BatchIndex'), variables('TotalChunkIds'))",
+                "limit": {
+                    "count": 5000,
+                    "timeout": "PT1H"
+                },
+                "actions": {
+                    "Delete_Batch": {
+                        "type": "ServiceProvider",
+                        "inputs": {
+                            "parameters": {
+                                "indexName": "chunk_lg_index",
+                                "documents": "@body('Form_ID_Array_with_ID_Field')"
+                            },
+                            "serviceProviderConfiguration": {
+                                "connectionName": "azureaisearch",
+                                "operationId": "deleteDocuments",
+                                "serviceProviderId": "/serviceProviders/azureaisearch"
+                            }
+                        },
+                        "runAfter": {
+                            "Form_ID_Array_with_ID_Field": [
+                                "SUCCEEDED"
+                            ]
+                        }
+                    },
+                    "Get_Batch": {
+                        "type": "Compose",
+                        "inputs": "@take(skip(outputs('Get_Chunk_ID_List'),variables('BatchIndex')),variables('BatchSize'))"
+                    },
+                    "Increment_variable": {
+                        "type": "IncrementVariable",
+                        "inputs": {
+                            "name": "BatchIndex",
+                            "value": "@variables('BatchSize')"
+                        },
+                        "runAfter": {
+                            "Delete_Batch": [
+                                "SUCCEEDED"
+                            ]
+                        }
+                    },
+                    "Form_ID_Array_with_ID_Field": {
+                        "type": "Select",
+                        "inputs": {
+                            "from": "@outputs('Get_Batch')",
+                            "select": {
+                                "id": "@trim(item())"
+                            }
+                        },
+                        "runAfter": {
+                            "Get_Batch": [
+                                "SUCCEEDED"
+                            ]
+                        }
+                    }
+                },
+                "runAfter": {
+                    "Initialize_Batch_Vars_for_Deletion": [
+                        "SUCCEEDED"
+                    ]
+                }
+            },
+            "Generate_Document_ID": {
+                "type": "Function",
+                "inputs": {
+                    "method": "POST",
+                    "body": {
+                        "source_url": "@outputs('Compose_BlobUrl')"
+                    },
+                    "function": {
+                        "connectionName": "azureFunctionOperation-2"
+                    }
+                },
+                "runAfter": {
+                    "Compose_BlobUrl": [
+                        "SUCCEEDED"
+                    ]
+                }
+            },
+            "Parse_Document_ID_Output": {
+                "type": "ParseJson",
+                "inputs": {
+                    "content": "@body('Generate_Document_ID')",
+                    "schema": {
+                        "type": "object",
+                        "properties": {
+                            "base_document_id": {
+                                "type": "string"
+                            },
+                            "source_url": {
+                                "type": "string"
+                            }
+                        }
+                    }
+                },
+                "runAfter": {
+                    "Generate_Document_ID": [
+                        "SUCCEEDED"
+                    ]
+                }
+            },
+            "Delete_a_blob": {
+                "type": "ServiceProvider",
+                "inputs": {
+                    "parameters": {
+                        "containerName": "@parameters('blob_container_name')",
+                        "blobName": "@triggerBody()?['blobFilePath']"
+                    },
+                    "serviceProviderConfiguration": {
+                        "connectionName": "AzureBlob",
+                        "operationId": "deleteBlob",
+                        "serviceProviderId": "/serviceProviders/AzureBlob"
+                    }
+                },
+                "runAfter": {
+                    "Delete_an_item": [
+                        "SUCCEEDED"
+                    ]
+                }
+            }
+        },
+        "contentVersion": "1.0.0.0",
+        "outputs": {},
+        "triggers": {
+            "When_a_HTTP_request_is_received": {
+                "type": "Request",
+                "kind": "Http",
+                "inputs": {
+                    "schema": {
+                        "type": "object",
+                        "properties": {
+                            "blobFilePath": {
+                                "type": "string"
+                            },
+                            "category": {
+                                "type": "string"
+                            }
+                        }
+                    }
+                },
+                "correlation": {
+                    "clientTrackingId": "@{triggerBody()?['blobFilePath']}"
+                },
+                "runtimeConfiguration": {
+                    "concurrency": {
+                        "runs": 1
+                    }
+                }
+            }
+        }
+    },
+    "kind": "Stateful"
+}

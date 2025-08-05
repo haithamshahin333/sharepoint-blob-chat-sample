@@ -103,6 +103,9 @@
                                                                 "body": {
                                                                     "blobFilePath": "@item()?['{FullPath}']",
                                                                     "category": "@triggerBody()?['category']"
+                                                                },
+                                                                "retryPolicy": {
+                                                                    "type": "none"
                                                                 }
                                                             }
                                                         },
@@ -118,10 +121,25 @@
                                                                     "identifier": "@item()?['{Identifier}']",
                                                                     "fullpath": "@item()?['{FullPath}']",
                                                                     "category": "@triggerBody()?['category']"
+                                                                },
+                                                                "retryPolicy": {
+                                                                    "type": "none"
                                                                 }
                                                             },
                                                             "runAfter": {
                                                                 "Remove_the_Blob_from_Index_and_Storage": [
+                                                                    "SUCCEEDED"
+                                                                ]
+                                                            }
+                                                        },
+                                                        "Append_to_Updated_Array": {
+                                                            "type": "AppendToArrayVariable",
+                                                            "inputs": {
+                                                                "name": "UpdatedFiles",
+                                                                "value": "@item()?['{FullPath}']"
+                                                            },
+                                                            "runAfter": {
+                                                                "Re-Index_and_Copy_to_Blob_": [
                                                                     "SUCCEEDED"
                                                                 ]
                                                             }
@@ -146,7 +164,22 @@
                                                                 "identifier": "@item()?['{Identifier}']",
                                                                 "fullpath": "@item()?['{FullPath}']",
                                                                 "category": "@triggerBody()?['category']"
+                                                            },
+                                                            "retryPolicy": {
+                                                                "type": "none"
                                                             }
+                                                        }
+                                                    },
+                                                    "Append_to_New_Files_Array": {
+                                                        "type": "AppendToArrayVariable",
+                                                        "inputs": {
+                                                            "name": "NewFiles",
+                                                            "value": "@item()?['{FullPath}']"
+                                                        },
+                                                        "runAfter": {
+                                                            "Index_and_Sync": [
+                                                                "SUCCEEDED"
+                                                            ]
                                                         }
                                                     }
                                                 }
@@ -188,7 +221,7 @@
                     }
                 },
                 "runAfter": {
-                    "Append_to_UncrawledFolders": [
+                    "Append_to_array_variable": [
                         "SUCCEEDED"
                     ]
                 }
@@ -197,7 +230,11 @@
                 "type": "Response",
                 "kind": "Http",
                 "inputs": {
-                    "statusCode": 200
+                    "statusCode": 200,
+                    "body": {
+                        "updated": "@variables('UpdatedFiles')",
+                        "added": "@variables('NewFiles')"
+                    }
                 },
                 "runAfter": {
                     "Until": [
@@ -210,17 +247,22 @@
                 "inputs": {
                     "variables": [
                         {
-                            "name": "UncrawledFolders",
-                            "type": "array",
-                            "value": []
-                        },
-                        {
                             "name": "LoopIndex",
                             "type": "integer",
                             "value": 0
                         },
                         {
-                            "name": "ErrorFiles",
+                            "name": "UncrawledFolders",
+                            "type": "array",
+                            "value": []
+                        },
+                        {
+                            "name": "UpdatedFiles",
+                            "type": "array",
+                            "value": []
+                        },
+                        {
+                            "name": "NewFiles",
                             "type": "array",
                             "value": []
                         }
@@ -228,7 +270,7 @@
                 },
                 "runAfter": {}
             },
-            "Append_to_UncrawledFolders": {
+            "Append_to_array_variable": {
                 "type": "AppendToArrayVariable",
                 "inputs": {
                     "name": "UncrawledFolders",
