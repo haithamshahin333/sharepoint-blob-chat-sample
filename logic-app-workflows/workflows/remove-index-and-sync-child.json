@@ -110,7 +110,7 @@
                         "type": "ServiceProvider",
                         "inputs": {
                             "parameters": {
-                                "indexName": "chunk_lg_index",
+                                "indexName": "@parameters('chunk_index')",
                                 "documents": "@body('Form_ID_Array_with_ID_Field')"
                             },
                             "serviceProviderConfiguration": {
