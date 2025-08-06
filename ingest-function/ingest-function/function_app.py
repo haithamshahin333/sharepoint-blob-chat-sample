@@ -17,6 +17,9 @@ from azure.identity import DefaultAzureCredential
 from azure.core.credentials import AzureKeyCredential
 from azure.core.exceptions import AzureError
 
+# Import document analysis utilities
+from document_analysis import analyze_document_content
+
 app = func.FunctionApp()
 
 def get_document_intelligence_client() -> DocumentIntelligenceClient:
@@ -284,13 +287,15 @@ def generate_document_id_endpoint(req: func.HttpRequest) -> func.HttpResponse:
 @app.route(route="process-document", methods=["POST"])
 def process_document_to_markdown(req: func.HttpRequest) -> func.HttpResponse:
     """
-    Azure Function that processes document binary data and returns page-split markdown.
+    Azure Function that processes document binary data and returns page-split markdown with document-level analysis.
     
     Expected input: 
     - Raw binary file data in request body
     - Optional query parameter 'source_url' for document ID generation
     
-    Returns: JSON array of objects with document_id, page_number, markdown_content, and token_count
+    Returns: JSON object with:
+    - document_summary: Object with base_document_id, total_pages, total_tokens, summary, key_topics, document_type, analysis_status
+    - pages: Array of page objects with document_id, page_number, markdown_content, token_count, and batch_index
     """
     try:
         logging.info("Processing document conversion request")
@@ -341,9 +346,33 @@ def process_document_to_markdown(req: func.HttpRequest) -> func.HttpResponse:
         # Split markdown content by page breaks (using HTML comments)
         pages = split_markdown_by_pages(full_markdown, source_url)
         
-        response_data = pages
+        # Analyze document content for document-level attributes
+        try:
+            logging.info("Starting document analysis for summary and attributes")
+            document_summary = analyze_document_content(full_markdown, pages)
+            document_summary["base_document_id"] = generate_base_document_id(source_url)
+            logging.info("Document analysis completed successfully")
+        except Exception as e:
+            logging.warning(f"Document analysis failed: {e}")
+            # Fallback: basic summary with error info
+            document_summary = {
+                "base_document_id": generate_base_document_id(source_url),
+                "total_pages": len(pages),
+                "total_tokens": sum(page["token_count"] for page in pages),
+                "summary": None,
+                "key_topics": [],
+                "document_type": "Unknown",
+                "analysis_status": "failed",
+                "error": str(e)
+            }
         
-        logging.info(f"Successfully processed document into {len(response_data)} pages")
+        # Enhanced response structure
+        response_data = {
+            "document_summary": document_summary,
+            "pages": pages
+        }
+        
+        logging.info(f"Successfully processed document with {len(pages)} pages and document-level analysis")
         
         return func.HttpResponse(
             json.dumps(response_data, indent=2),
